@@ -1,3 +1,4 @@
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
@@ -26,7 +27,16 @@ const Dashboard = () => {
   return (
     <div>
       <h1>Dashboard</h1>
-      <div>{JSON.stringify(data)}</div>
+      <ResponsiveContainer width="100%" height={400}>
+        <LineChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="period" />
+          <YAxis />
+          <Tooltip />
+          <Legend />
+          <Line type="monotone" dataKey="value" stroke="#8884d8" />
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 };

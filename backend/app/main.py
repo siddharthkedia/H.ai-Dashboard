@@ -1,9 +1,18 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+# from backend.app.h_ai_metrics import get_db
+# from backend.app.models import DataComparison
+from pymongo import MongoClient
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import random  # For demo purposes
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+# # Dependency to get the MongoDB database
+# def get_collection():
+#     db = get_db()
+#     return db["data_comparison"]  # Access the data_comparison collection in MongoDB
 
 # Allow CORS for the frontend (React app) running on localhost:3000
 app.add_middleware(
@@ -19,12 +28,26 @@ app.add_middleware(
 class ComparisonData(BaseModel):
     period: str
     value: float
+
 @app.get("/")
 def read_root():
     return {"message": "Hello, World!"}
 
 @app.get("/api/compare-weekly")
-async def compare_weekly():
+async def compare_weekly():#db: MongoClient = Depends(get_db)):
+#     collection = get_collection()
+#     # Fetch documents where the period is 'Week'
+#     comparison_data = list(collection.find({"period": "Week"}))  # Fetch as a list
+#     return comparison_data  # Return as JSON response
+
+    
+# @app.post("/api/compare-weekly")
+# async def add_data():#data: DataComparison, db: MongoClient = Depends(get_db)):
+#     # collection = get_collection()
+#     # # Insert a new document into the collection
+#     # result = collection.insert_one(data.dict())  # Convert the Pydantic model to a dict
+#     # return {"message": "Data added", "id": str(result.inserted_id)}
+
     # Generate random data for testing (replace with actual DB query later)
     data = [ComparisonData(period=f"Week {i}", value=random.uniform(50, 200)) for i in range(1, 5)]
     return data
