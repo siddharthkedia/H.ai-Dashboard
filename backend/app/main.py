@@ -19,15 +19,34 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],  # Allow only the React app to make requests
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],  # Allow the necessary methods
-    allow_headers=["*"],  # Allow any headers
+    allow_methods=["GET", "POST", "PUT", "DELETE"], 
+    allow_headers=["*"], 
 )
 
 
-# Define a model for comparison data
 class ComparisonData(BaseModel):
     period: str
     value: float
+
+# Hardcoded data for metrics
+metrics_data = {
+    "totalUniqueSessions": 1200,
+    "totalUserConsentedSessions": 950,
+    "ctr": 15.5,  # Click Through Rate in percentage
+    "totalChatSessions": 800,
+    "totalChatMessages": 15000,
+    "avgMessagesPerSession": 18.75,
+    "maxMessagesInSession": 200,
+    "totalEngagementTime": 5500,  # In minutes
+    "avgEngagementTimePerSession": 7,
+    "maxEngagementTimeInSession": 120,
+    "otpLoggedInSessions": 300,
+    "manuallyLoggedOutSessions": 50,
+}
+
+@app.get("/api/metrics")
+async def get_metrics():
+    return JSONResponse(content=metrics_data)
 
 @app.get("/")
 def read_root():
