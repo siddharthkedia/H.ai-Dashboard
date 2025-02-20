@@ -17,25 +17,11 @@ const MetricCard = ({ title, value }) => (
 const Dashboard = () => {
   const [metrics, setMetrics] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [startDate, setStartDate] = useState("2024-01-01");
+  const [startDate, setStartDate] = useState("2024-11-01");
   const [endDate, setEndDate] = useState("2025-01-31");
-  const [frequency, setFrequency] = useState("Monthly");
-  const [chartData, setChartData] = useState([]);
-  
+  const [frequency, setFrequency] = useState("Weekly");
+  const [chartData, setChartData] = useState({});
 
-  // Fetch metrics data from the backend using Axios
-  // useEffect(() => {
-    // Fetch data from backend
-    // axios.get('http://127.0.0.1:8000/api/compare-weekly')
-    //   .then(response => {
-    //     setData(response.data);
-    //     setLoading(false);
-    //   })
-    //   .catch(error => {
-    //     console.error('Error fetching data:', error);
-    //     setLoading(false);
-    //   });
-      // console.log('data-->',data);
       const fetchMetrics = async () => {
     setLoading(true);
         try {
@@ -43,10 +29,14 @@ const Dashboard = () => {
           start_date: startDate,
           end_date: endDate,
         }, {
-          params: { bot_name: "HAiBot", frequency }
+          params: { bot_name: "HAiBot" }
         });
-        setMetrics(response.data);
-        setChartData(response.data.map((item) => ({ date: item.metric, value: item.value })));
+        const rawData = response.data;
+        // console.log('Raw Data->', JSON.stringify(rawData));
+        const aggregatedData = aggregateData(rawData, frequency);
+        console.log('Aggregate Data->', JSON.stringify(aggregatedData));
+        setMetrics(aggregatedData);
+      setChartData(formatChartData(aggregatedData));
         } catch (error) {
           console.error("Error fetching data:", error);
       } finally {
@@ -54,6 +44,60 @@ const Dashboard = () => {
         }
       };
   
+  // Aggregate Data
+      const aggregateData = (rawData, frequency) => {
+  const groupedData = {};
+
+  rawData.forEach(metric => {
+    metric.values.forEach(entry => {
+      const date = new Date(entry.period);
+      let key;
+
+      if (frequency === "Weekly") {
+        const weekStart = new Date(date);
+        weekStart.setDate(date.getDate() - date.getDay() + 1); // Ensure week starts on Monday
+        key = weekStart.toISOString().split("T")[0];
+      } else if (frequency === "Monthly") {
+        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      } else if (frequency === "Quarterly") {
+        const quarter = Math.floor(date.getMonth() / 3) + 1;
+        key = `${date.getFullYear()}-Q${quarter}`;
+      } else if (frequency === "Yearly") {
+        key = `${date.getFullYear()}`;
+      }
+
+      if (!groupedData[key]) {
+        groupedData[key] = { period: key };
+      }
+
+      if (!groupedData[key][metric.metric]) {
+        groupedData[key][metric.metric] = 0;
+      }
+
+      groupedData[key][metric.metric] += entry.value;
+    });
+  });
+
+  return Object.values(groupedData);
+};
+
+  // Format Data for Charts (Separate Data for Each Metric)
+const formatChartData = (aggregatedData) => {
+    const formattedData = {};
+    if (aggregatedData.length === 0) return formattedData;
+
+    Object.keys(aggregatedData[0]).forEach(metric => {
+      if (metric !== "period") {
+        formattedData[metric] = aggregatedData.map(entry => ({
+    period: entry.period,
+          value: entry[metric] || 0
+  }));
+      }
+    });
+
+    return formattedData;
+};
+
   return (
     <Box display="flex" height="100vh">
       <Box sx={{ width: "25%", padding: 3, bgcolor: "#fff", display: "flex", flexDirection: "column", gap: 2, boxShadow: 2 }}>
@@ -77,10 +121,9 @@ const Dashboard = () => {
           </FormControl>
         <Button variant="contained" color="primary" sx={{ bgcolor: "#000", color: "#fff", ':hover': { bgcolor: "#333" } }} onClick={fetchMetrics}>Apply</Button>
       </Box>
+      
       <Box flexGrow={1} padding={3} bgcolor="#f4f4f4">
-        <Typography variant="h3" gutterBottom fontWeight="bold">
-        Dashboard Metrics
-      </Typography>
+        <Typography variant="h3" gutterBottom fontWeight="bold">Dashboard Metrics</Typography>
         {loading ? (
           <Box display="flex" justifyContent="center" alignItems="center" height="50vh">
             <CircularProgress />
@@ -88,22 +131,31 @@ const Dashboard = () => {
         ) : (
           <>
       <Grid container spacing={2}>
-        {metrics.map((metric, index) => (
+              {metrics.length > 0 && Object.keys(metrics[0]).map((key, index) => (
+                key !== "period" && (
           <Grid item xs={12} sm={6} md={4} key={index}>
-            <MetricCard title={metric.metric} value={metric.value} />
+                    <MetricCard title={key} value={metrics.reduce((sum, entry) => sum + entry[key], 0)} />
           </Grid>
+                )
         ))}
       </Grid>
+
+            {/* Separate Graphs for Each Metric */}
+            {Object.keys(chartData).map((metric, index) => (
+              <Box key={index} my={4}>
+                <Typography variant="h5" gutterBottom fontWeight="bold">{metric}</Typography>
         <ResponsiveContainer width="100%" height={400}>
-          <LineChart data={chartData}>
+                  <LineChart data={chartData[metric]}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
+                <XAxis dataKey="period" />
             <YAxis />
             <Tooltip />
             <Legend />
-                <Line type="monotone" dataKey="value" stroke="#8884d8" strokeWidth={2} />
+                    <Line type="monotone" dataKey="value" stroke="#8884d8" strokeWidth={2} />
           </LineChart>
         </ResponsiveContainer>
+              </Box>
+            ))}
           </>
         )}
       </Box>
@@ -112,35 +164,3 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
-const aggregateData = (rawData, frequency) => {
-  const groupedData = {};
-
-  rawData.forEach(session => {
-    const date = new Date(session.created_at);
-    let key;
-
-    if (frequency === "Weekly") {
-      const weekStart = new Date(date);
-      weekStart.setDate(date.getDate() - date.getDay());
-      key = weekStart.toISOString().split("T")[0];
-    } else if (frequency === "Monthly") {
-      key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-    } else if (frequency === "Quarterly") {
-      const quarter = Math.floor(date.getMonth() / 3) + 1;
-      key = `${date.getFullYear()}-Q${quarter}`;
-    } else if (frequency === "Yearly") {
-      key = `${date.getFullYear()}`;
-    }
-
-    if (!groupedData[key]) {
-      groupedData[key] = { period: key, session_count: 0, consented_count: 0 };
-    }
-
-    groupedData[key].session_count += 1;
-    if (session.is_consented) groupedData[key].consented_count += 1;
-  });
-
-  return Object.values(groupedData);
-};
-
