@@ -112,3 +112,35 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+
+const aggregateData = (rawData, frequency) => {
+  const groupedData = {};
+
+  rawData.forEach(session => {
+    const date = new Date(session.created_at);
+    let key;
+
+    if (frequency === "Weekly") {
+      const weekStart = new Date(date);
+      weekStart.setDate(date.getDate() - date.getDay());
+      key = weekStart.toISOString().split("T")[0];
+    } else if (frequency === "Monthly") {
+      key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    } else if (frequency === "Quarterly") {
+      const quarter = Math.floor(date.getMonth() / 3) + 1;
+      key = `${date.getFullYear()}-Q${quarter}`;
+    } else if (frequency === "Yearly") {
+      key = `${date.getFullYear()}`;
+    }
+
+    if (!groupedData[key]) {
+      groupedData[key] = { period: key, session_count: 0, consented_count: 0 };
+    }
+
+    groupedData[key].session_count += 1;
+    if (session.is_consented) groupedData[key].consented_count += 1;
+  });
+
+  return Object.values(groupedData);
+};
+
