@@ -47,93 +47,11 @@ class MongoDBConnection:
             codec_options=CodecOptions(tz_aware=True, tzinfo=TZ)
         )
 
-def calculate_metrics_for_date(session_store, date: datetime) -> Dict[str, Union[str, int, float]]:
-    """Calculate metrics for a specific date"""
-    day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = date.replace(hour=23, minute=59, second=59, microsecond=999999)
-
-    # Get total sessions
-    sessions = list(session_store.aggregate([
-        {
-            "$match": {
-                "created_at": {
-                    "$gte": day_start,
-                    "$lte": day_end,
-                }
-            }
-        },
-        {"$count": "count"},
-    ]))
-
-    # Get consented sessions with chat history
-    consented_sessions = list(session_store.aggregate([
-        {
-            "$match": {
-                "created_at": {
-                    "$gte": day_start,
-                    "$lte": day_end,
-                }
-            }
-        },
-        {"$match": {"terms_of_service_consent.is_consented": True}},
-        {"$addFields": {"session_id": {"$toString": "$_id"}}},
-        {
-            "$lookup": {
-                "from": "chat_history",
-                "localField": "session_id",
-                "foreignField": "SessionId",
-                "as": "chat_history",
-            }
-        },
-        {
-            "$project": {
-                "data.access_token": 1,
-                "logout": 1,
-                "session_id": 1,
-                "created_at": 1,
-                "updated_at": 1,
-                "chat_history": {"_id": 1, "History": 1},
-            }
-        },
-    ]))
-
-    # Filter chat sessions
-    chat_sessions = list(filter(
-        lambda session: len(session["chat_history"]) > 2,
-        consented_sessions,
-    ))
-
-    # Calculate metrics
-    session_count = sessions[0]["count"] if sessions else 0
-    consented_session_count = len(consented_sessions)
-    chat_session_count = len(chat_sessions)
-    
-    # Calculate click-through rate
-    click_through_rate = round((consented_session_count / session_count) * 100, 2) if session_count > 0 else 0
-    
-    # Calculate message metrics
-    total_chat_session_messages = reduce(
-        lambda sum, session: sum + len(session["chat_history"]),
-        chat_sessions,
-        0,
-    )
-    
-    avg_messages_count = round(
-        total_chat_session_messages / chat_session_count, 2
-    ) if chat_session_count > 0 else 0
-
-    return {
-        "period": date.strftime("%d %b %Y"),
-        "session_count": session_count,
-        "consented_session_count": consented_session_count,
-        "click_through_rate": click_through_rate,
-        "chat_session_count": chat_session_count,
-        "avg_messages_count": avg_messages_count
-    }
-
 @app.get("/")
 def read_root():
     return {"message": "Metrics API"}
+
+
 
 @app.post("/api/metrics", response_model=List[MetricsResponse])
 async def get_metrics(date_range: DateRange, bot_name: str):
@@ -145,15 +63,81 @@ async def get_metrics(date_range: DateRange, bot_name: str):
         start_date = datetime.strptime(date_range.start_date, "%Y-%m-%d").replace(tzinfo=TZ)
         end_date = datetime.strptime(date_range.end_date, "%Y-%m-%d").replace(tzinfo=TZ)
         
-        # Calculate metrics for each day in the date range
-        metrics_by_date = []
-        current_date = start_date
-        while current_date <= end_date:
-            daily_metrics = calculate_metrics_for_date(session_store, current_date)
-            metrics_by_date.append(daily_metrics)
-            current_date += timedelta(days=1)
+        # Aggregate all sessions in the date range
+        sessions = list(session_store.aggregate([
+            {
+                "$match": {
+                    "created_at": {
+                        "$gte": start_date,
+                        "$lte": end_date,
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "created_at": 1,
+                    "terms_of_service_consent.is_consented": 1,
+                    "_id": 1
+                }
+            },
+            # Add a date field for grouping
+            {
+                "$addFields": {
+                    "date": {
+                        "$dateToString": {
+                            "format": "%Y-%m-%d",
+                            "date": "$created_at"
+                        }
+                    }
+                }
+            },
+            {
+                "$lookup": {
+                    "from": "chat_history",
+                    "localField": "_id",
+                    "foreignField": "SessionId",
+                    "as": "chat_history"
+                }
+            }
+        ]))
 
-        # Prepare response
+        # Group sessions by date and calculate metrics
+        grouped_sessions = {}
+        for session in sessions:
+            session_date = session['date']
+            if session_date not in grouped_sessions:
+                grouped_sessions[session_date] = {
+                    "session_count": 0,
+                    "consented_session_count": 0,
+                    "chat_session_count": 0,
+                    "total_chat_messages": 0
+                }
+
+            grouped_sessions[session_date]["session_count"] += 1
+            if session["terms_of_service_consent"]["is_consented"]:
+                grouped_sessions[session_date]["consented_session_count"] += 1
+            if len(session["chat_history"]) > 2:
+                grouped_sessions[session_date]["chat_session_count"] += 1
+                grouped_sessions[session_date]["total_chat_messages"] += len(session["chat_history"])
+
+        # Prepare metrics for the response
+        metrics_by_date = []
+        for date, data in grouped_sessions.items():
+            click_through_rate = round((data["consented_session_count"] / data["session_count"]) * 100, 2) if data["session_count"] > 0 else 0
+            avg_messages_count = round(
+                data["total_chat_messages"] / data["chat_session_count"], 2
+            ) if data["chat_session_count"] > 0 else 0
+
+            metrics_by_date.append({
+                "period": date,
+                "session_count": data["session_count"],
+                "consented_session_count": data["consented_session_count"],
+                "click_through_rate": click_through_rate,
+                "chat_session_count": data["chat_session_count"],
+                "avg_messages_count": avg_messages_count
+            })
+
+        # Constructing the response
         metrics = [
             MetricsResponse(
                 metric="Total unique sessions",
