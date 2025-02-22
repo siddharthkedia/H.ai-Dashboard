@@ -50,28 +50,41 @@ class MongoDBConnection:
         )
 
 def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> list:
-    return [
+    pipeline = [
+        # Stage 1: Filter sessions by date
         {
             "$match": {
                 "created_at": {"$gte": start_date, "$lte": end_date}
             }
         },
+        # Stage 2: Prepare lookup key
+        {
+            "$addFields": {
+                "sessionIdStr": {"$toString": "$_id"}
+            }
+        },
+        # Stage 3: Lookup chat history
         {
             "$lookup": {
                 "from": "chat_history",
-                "localField": "_id",
+                "localField": "sessionIdStr",
                 "foreignField": "SessionId",
                 "as": "chatHistory"
             }
         },
+        # Stage 4: Compute chat history size
         {
             "$addFields": {
-                "consented": {"$cond": {"if": "$terms_of_service_consent.is_consented", "then": 1, "else": 0}},
-                "chatHistorySize": {"$size": "$chatHistory"},
-                "isChatSession": {"$gt": [{"$size": "$chatHistory"}, 2]},
+                "chatHistorySize": {"$size": "$chatHistory"}
+            }
+        },
+        # Stage 5: Derive additional fields based on chatHistorySize
+        {
+            "$addFields": {
+                "isChatSession": {"$gt": ["$chatHistorySize", 2]},
                 "duration": {
                     "$cond": {
-                        "if": {"$gte": [{"$size": "$chatHistory"}, 2]},
+                        "if": {"$gt": ["$chatHistorySize", 2]},
                         "then": {
                             "$divide": [
                                 {"$subtract": [
@@ -84,10 +97,29 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                         "else": 0
                     }
                 },
-                "hasAccessToken": {"$cond": {"if": {"$ifNull": ["$data.access_token", False]}, "then": 1, "else": 0}},
-                "hasLogout": {"$cond": {"if": {"$ifNull": ["$logout", False]}, "then": 1, "else": 0}}
+                "hasAccessToken": {
+                    "$cond": {
+                        "if": {"$ifNull": ["$data.access_token", False]},
+                        "then": 1,
+                        "else": 0
+                    }
+                },
+                "hasLogout": {
+                    "$cond": {
+                        "if": {"$ifNull": ["$logout", False]},
+                        "then": 1,
+                        "else": 0
+                    }
+                }
             }
         },
+        # Stage 6: Remove the bulky chatHistory array to reduce payload size in grouping
+        {
+            "$project": {
+                "chatHistory": 0
+            }
+        },
+        # Stage 7: Group by day and calculate metrics
         {
             "$group": {
                 "_id": {
@@ -98,27 +130,17 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                     }
                 },
                 "sessionCount": {"$sum": 1},
-                "consentedCount": {"$sum": "$consented"},
+                "consentedCount": {"$sum": {"$cond": [{"$ifNull": ["$terms_of_service_consent.is_consented", False]}, 1, 0]}},
                 "chatSessionCount": {"$sum": {"$cond": ["$isChatSession", 1, 0]}},
-                "totalMessages": {"$sum": "$chatHistorySize"},
-                "totalDuration": {"$sum": "$duration"},
-                "maxMessages": {"$max": "$chatHistorySize"},
-                "maxDuration": {"$max": "$duration"},
-                "otpLogins": {"$sum": "$hasAccessToken"},
-                "manualLogouts": {"$sum": "$hasLogout"},
-                "avgMessages": {"$avg": "$chatHistorySize"},
-                "avgDuration": {"$avg": "$duration"},
-                "ctr": {
-                    "$avg": {
-                        "$cond": [
-                            {"$eq": ["$sessionCount", 0]},
-                            0,
-                            {"$divide": ["$consented", "$sessionCount"]}
-                        ]
-                    }
-                }
+                "totalMessages": {"$sum": {"$cond": ["$isChatSession", "$chatHistorySize", 0]}},
+                "totalDuration": {"$sum": {"$cond": ["$isChatSession", "$duration", 0]}},
+                "maxMessages": {"$max": {"$cond": ["$isChatSession", "$chatHistorySize", 0]}},
+                "maxDuration": {"$max": {"$cond": ["$isChatSession", "$duration", 0]}},
+                "otpLogins": {"$sum": {"$cond": ["$isChatSession", "$hasAccessToken", 0]}},
+                "manualLogouts": {"$sum": {"$cond": ["$isChatSession", "$hasLogout", 0]}},
             }
         },
+        # Stage 8: Final projection 
         {
             "$project": {
                 "_id": 0,
@@ -132,13 +154,57 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                 "maxDuration": 1,
                 "otpLogins": 1,
                 "manualLogouts": 1,
-                "avgMessages": 1,
-                "avgDuration": 1,
-                "ctr": 1
+                "avgMessages": {
+                    "$switch": {
+                        "branches": [
+                            {
+                                "case": {"$eq": ["$chatSessionCount", 0]},
+                                "then": 0
+                            },
+                            {
+                                "case": {"$gt": ["$chatSessionCount", 0]},
+                                "then": {"$divide": ["$totalMessages", "$chatSessionCount"]}
+                            }
+                        ],
+                        "default": 0
+                    }
+                },
+                "avgDuration": {
+                    "$switch": {
+                        "branches": [
+                            {
+                                "case": {"$eq": ["$chatSessionCount", 0]},
+                                "then": 0
+                            },
+                            {
+                                "case": {"$gt": ["$chatSessionCount", 0]},
+                                "then": {"$divide": ["$totalDuration", "$chatSessionCount"]}
+                            }
+                        ],
+                        "default": 0
+                    }
+                },
+                "ctr": {
+                    "$switch": {
+                        "branches": [
+                            {
+                                "case": {"$eq": ["$sessionCount", 0]},
+                                "then": 0
+                            },
+                            {
+                                "case": {"$gt": ["$sessionCount", 0]},
+                                "then": {"$multiply": [{"$divide": ["$consentedCount", "$sessionCount"]}, 100]}
+                            }
+                        ],
+                        "default": 0
+                    }
+                }
             }
         },
+        # Stage 9: Sort the results by date
         {"$sort": {"date": 1}}
     ]
+    return pipeline
 
 @app.post("/api/metrics", response_model=List[MetricsResponse])
 async def get_metrics(dateRange: DateRange, botName: str):
@@ -162,16 +228,16 @@ async def get_metrics(dateRange: DateRange, botName: str):
         metrics_map = {
             "Total unique sessions": ("sessionCount", "Number of unique sessions created"),
             "User consented sessions": ("consentedCount", "Sessions with user consent"),
-            "Click Through Rate (%)": ("ctr", "Percentage of consented sessions", lambda x: round((x or 0) * 100, 2)),
+            "Click Through Rate (%)": ("ctr", "Percentage of consented sessions", lambda x: round(x or 0, 2)),
             "Active chat sessions": ("chatSessionCount", "Sessions with >2 messages"),
-            "Total messages": ("totalMessages", "All messages across sessions"),
-            "Avg messages/session": ("avgMessages", "Average messages per chat session", round),
-            "Max messages (session)": ("maxMessages", "Most messages in a single session"),
-            "Total engagement (minutes)": ("totalDuration", "Total chat time across sessions", round),
-            "Avg session duration (minutes)": ("avgDuration", "Average chat session length", round),
-            "Max duration (minutes)": ("maxDuration", "Longest chat session duration", round),
-            "OTP logins": ("otpLogins", "Sessions with OTP authentication"),
-            "Manual logouts": ("manualLogouts", "Explicit user logouts")
+            "Total messages (active chat sessions)": ("totalMessages", "All messages in active chat sessions"),
+            "Avg messages per chat session": ("avgMessages", "Average messages per active chat session", round),
+            "Max messages (active chat session)": ("maxMessages", "Most messages in a single active chat session"),
+            "Total engagement (minutes, active chat sessions)": ("totalDuration", "Total chat time in active chat sessions", round),
+            "Avg session duration (minutes, active chat sessions)": ("avgDuration", "Average duration per active chat session", round),
+            "Max duration (minutes, active chat session)": ("maxDuration", "Longest chat session duration among active sessions", round),
+            "OTP logins (active chat sessions)": ("otpLogins", "Sessions with OTP authentication in active chat sessions"),
+            "Manual logouts (active chat sessions)": ("manualLogouts", "Sessions with manual logout in active chat sessions")
         }
 
         response = []
