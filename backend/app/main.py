@@ -201,8 +201,6 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                 }
             }
         },
-        # Stage 9: Sort the results by date
-        {"$sort": {"date": 1}}
     ]
     return pipeline
 
