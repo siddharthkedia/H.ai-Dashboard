@@ -6,6 +6,7 @@ from typing import List, Union
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from bson.codec_options import CodecOptions
+import time
 
 app = FastAPI()
 
@@ -36,11 +37,15 @@ class DateRange(BaseModel):
     startDate: str
     endDate: str
 
-# MongoDB Connection Handler
+# MongoDB Connection Handler 
 class MongoDBConnection:
-    def __init__(self, db_name: str):
-        self.client = MongoClient(MONGODB_URI)
-        self.db = self.client[db_name].with_options(
+    _client = None
+    
+    @classmethod
+    def get_db(cls, db_name: str):
+        if not cls._client:
+            cls._client = MongoClient(MONGODB_URI)
+        return cls._client[db_name].with_options(
             codec_options=CodecOptions(tz_aware=True, tzinfo=TZ)
         )
 
@@ -49,15 +54,6 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
         {
             "$match": {
                 "created_at": {"$gte": start_date, "$lte": end_date}
-            }
-        },
-        {
-            "$project": {
-                "created_at": 1,
-                "terms_of_service_consent.is_consented": 1,
-                "data.access_token": 1,
-                "logout": 1,
-                "_id": {"$toString": "$_id"}
             }
         },
         {
@@ -73,29 +69,23 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                 "consented": {"$cond": {"if": "$terms_of_service_consent.is_consented", "then": 1, "else": 0}},
                 "chatHistorySize": {"$size": "$chatHistory"},
                 "isChatSession": {"$gt": [{"$size": "$chatHistory"}, 2]},
-                "firstMessage": {"$arrayElemAt": ["$chatHistory._id", 0]},
-                "lastMessage": {"$arrayElemAt": ["$chatHistory._id", -1]},
-                "hasAccessToken": {"$cond": {"if": {"$ifNull": ["$data.access_token", False]}, "then": 1, "else": 0}},
-                "hasLogout": {"$cond": {"if": {"$ifNull": ["$logout", False]}, "then": 1, "else": 0}}
-            }
-        },
-        {
-            "$addFields": {
                 "duration": {
                     "$cond": {
-                        "if": {"$gte": ["$chatHistorySize", 2]},
+                        "if": {"$gte": [{"$size": "$chatHistory"}, 2]},
                         "then": {
                             "$divide": [
                                 {"$subtract": [
-                                    {"$toDate": "$lastMessage"},
-                                    {"$toDate": "$firstMessage"}
+                                    {"$toDate": {"$arrayElemAt": ["$chatHistory._id", -1]}},
+                                    {"$toDate": {"$arrayElemAt": ["$chatHistory._id", 0]}}
                                 ]},
-                                60000  # Convert milliseconds to minutes
+                                60000
                             ]
                         },
                         "else": 0
                     }
-                }
+                },
+                "hasAccessToken": {"$cond": {"if": {"$ifNull": ["$data.access_token", False]}, "then": 1, "else": 0}},
+                "hasLogout": {"$cond": {"if": {"$ifNull": ["$logout", False]}, "then": 1, "else": 0}}
             }
         },
         {
@@ -115,114 +105,86 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                 "maxMessages": {"$max": "$chatHistorySize"},
                 "maxDuration": {"$max": "$duration"},
                 "otpLogins": {"$sum": "$hasAccessToken"},
-                "manualLogouts": {"$sum": "$hasLogout"}
+                "manualLogouts": {"$sum": "$hasLogout"},
+                "avgMessages": {"$avg": "$chatHistorySize"},
+                "avgDuration": {"$avg": "$duration"},
+                "ctr": {
+                    "$avg": {
+                        "$cond": [
+                            {"$eq": ["$sessionCount", 0]},
+                            0,
+                            {"$divide": ["$consented", "$sessionCount"]}
+                        ]
+                    }
+                }
             }
         },
-        {"$sort": {"_id": 1}}
+        {
+            "$project": {
+                "_id": 0,
+                "date": "$_id",
+                "sessionCount": 1,
+                "consentedCount": 1,
+                "chatSessionCount": 1,
+                "totalMessages": 1,
+                "totalDuration": 1,
+                "maxMessages": 1,
+                "maxDuration": 1,
+                "otpLogins": 1,
+                "manualLogouts": 1,
+                "avgMessages": 1,
+                "avgDuration": 1,
+                "ctr": 1
+            }
+        },
+        {"$sort": {"date": 1}}
     ]
 
 @app.post("/api/metrics", response_model=List[MetricsResponse])
 async def get_metrics(dateRange: DateRange, botName: str):
     try:
-        # Initialize connection
-        conn = MongoDBConnection(botName)
-        sessions = conn.db["sessions"]
+        start_time = time.time()
+        
+        # Get database connection
+        db = MongoDBConnection.get_db(botName)
+        sessions = db["sessions"]
 
-        # Parse dates with timezone
+        # Parse dates
         start_date = datetime.fromisoformat(dateRange.startDate).replace(tzinfo=TZ)
         end_date = datetime.fromisoformat(dateRange.endDate).replace(tzinfo=TZ)
 
-        # Execute aggregation pipeline
+        # Build and execute pipeline
         pipeline = create_aggregation_pipeline(start_date, end_date)
-        daily_metrics = list(sessions.aggregate(pipeline))
+        cursor = sessions.aggregate(pipeline)
+        daily_metrics = list(cursor)
 
-        # Process results
-        metrics = []
-        for day in daily_metrics:
-            # Calculate derived metrics
-            ctr = (day["consentedCount"] / day["sessionCount"]) * 100 if day["sessionCount"] else 0
-            avg_messages = day["totalMessages"] / day["chatSessionCount"] if day["chatSessionCount"] else 0
-            avg_duration = day["totalDuration"] / day["chatSessionCount"] if day["chatSessionCount"] else 0
-            
-            metrics.append({
-                "period": day["_id"],
-                "sessionCount": day["sessionCount"],
-                "consentedCount": day["consentedCount"],
-                "ctr": round(ctr, 2),
-                "chatSessions": day["chatSessionCount"],
-                "totalMessages": day["totalMessages"],
-                "avgMessages": round(avg_messages, 2),
-                "maxMessages": day["maxMessages"],
-                "totalMinutes": round(day["totalDuration"], 2),
-                "avgDuration": round(avg_duration, 2),
-                "maxDuration": round(day["maxDuration"], 2),
-                "otpLogins": day["otpLogins"],
-                "manualLogouts": day["manualLogouts"]
-            })
+        # Format response
+        metrics_map = {
+            "Total unique sessions": ("sessionCount", "Number of unique sessions created"),
+            "User consented sessions": ("consentedCount", "Sessions with user consent"),
+            "Click Through Rate (%)": ("ctr", "Percentage of consented sessions", lambda x: round((x or 0) * 100, 2)),
+            "Active chat sessions": ("chatSessionCount", "Sessions with >2 messages"),
+            "Total messages": ("totalMessages", "All messages across sessions"),
+            "Avg messages/session": ("avgMessages", "Average messages per chat session", round),
+            "Max messages (session)": ("maxMessages", "Most messages in a single session"),
+            "Total engagement (minutes)": ("totalDuration", "Total chat time across sessions", round),
+            "Avg session duration (minutes)": ("avgDuration", "Average chat session length", round),
+            "Max duration (minutes)": ("maxDuration", "Longest chat session duration", round),
+            "OTP logins": ("otpLogins", "Sessions with OTP authentication"),
+            "Manual logouts": ("manualLogouts", "Explicit user logouts")
+        }
 
-        # Build response
-        return [
-            MetricsResponse(
-                metric="Total unique sessions",
-                values=[MetricValue(period=m["period"], value=m["sessionCount"]) for m in metrics],
-                remarks="Number of unique sessions created"
-            ),
-            MetricsResponse(
-                metric="User consented sessions",
-                values=[MetricValue(period=m["period"], value=m["consentedCount"]) for m in metrics],
-                remarks="Sessions with user consent"
-            ),
-            MetricsResponse(
-                metric="Click Through Rate (%)",
-                values=[MetricValue(period=m["period"], value=m["ctr"]) for m in metrics],
-                remarks="Percentage of consented sessions"
-            ),
-            MetricsResponse(
-                metric="Active chat sessions",
-                values=[MetricValue(period=m["period"], value=m["chatSessions"]) for m in metrics],
-                remarks="Sessions with >2 messages"
-            ),
-            MetricsResponse(
-                metric="Total messages",
-                values=[MetricValue(period=m["period"], value=m["totalMessages"]) for m in metrics],
-                remarks="All messages across sessions"
-            ),
-            MetricsResponse(
-                metric="Avg messages/session",
-                values=[MetricValue(period=m["period"], value=m["avgMessages"]) for m in metrics],
-                remarks="Average messages per chat session"
-            ),
-            MetricsResponse(
-                metric="Max messages (session)",
-                values=[MetricValue(period=m["period"], value=m["maxMessages"]) for m in metrics],
-                remarks="Most messages in a single session"
-            ),
-            MetricsResponse(
-                metric="Total engagement (minutes)",
-                values=[MetricValue(period=m["period"], value=m["totalMinutes"]) for m in metrics],
-                remarks="Total chat time across sessions"
-            ),
-            MetricsResponse(
-                metric="Avg session duration (minutes)",
-                values=[MetricValue(period=m["period"], value=m["avgDuration"]) for m in metrics],
-                remarks="Average chat session length"
-            ),
-            MetricsResponse(
-                metric="Max duration (minutes)",
-                values=[MetricValue(period=m["period"], value=m["maxDuration"]) for m in metrics],
-                remarks="Longest chat session duration"
-            ),
-            MetricsResponse(
-                metric="OTP logins",
-                values=[MetricValue(period=m["period"], value=m["otpLogins"]) for m in metrics],
-                remarks="Sessions with OTP authentication"
-            ),
-            MetricsResponse(
-                metric="Manual logouts",
-                values=[MetricValue(period=m["period"], value=m["manualLogouts"]) for m in metrics],
-                remarks="Explicit user logouts"
-            )
-        ]
+        response = []
+        for metric_name, (field, remark, *formatter) in metrics_map.items():
+            formatter = formatter[0] if formatter else lambda x: x
+            response.append(MetricsResponse(
+                metric=metric_name,
+                values=[MetricValue(period=m["date"], value=formatter(m[field])) for m in daily_metrics],
+                remarks=remark
+            ))
+
+        print(f"Processed {len(daily_metrics)} days in {time.time() - start_time:.2f}s")
+        return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
