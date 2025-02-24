@@ -1,5 +1,5 @@
 import { Card, CardContent, Typography, Grid, Select, MenuItem, FormControl, InputLabel, Box, Button, CircularProgress } from "@mui/material";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
@@ -17,10 +17,13 @@ const MetricCard = ({ title, value }) => (
 const Dashboard = () => {
   const [metrics, setMetrics] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [startDate, setStartDate] = useState("2024-11-01");
-  const [endDate, setEndDate] = useState("2025-01-31");
+  const [startDate, setStartDate] = useState();
+  const [endDate, setEndDate] = useState();
   const [frequency, setFrequency] = useState("Weekly");
   const [chartData, setChartData] = useState({});
+  const [rawData, setRawData] = useState([]);
+  const [prevStartDate, setPrevStartDate] = useState(startDate);
+  const [prevEndDate, setPrevEndDate] = useState(endDate);
 
       const fetchMetrics = async () => {
     setLoading(true);
@@ -31,12 +34,15 @@ const Dashboard = () => {
         }, {
           params: { bot_name: "HAiBot" }
         });
-        const rawData = response.data;
+        const fetchedData = response.data;
+        setRawData(fetchedData);
         // console.log('Raw Data->', JSON.stringify(rawData));
-        const aggregatedData = aggregateData(rawData, frequency);
+        const aggregatedData = aggregateData(fetchedData, frequency);
         console.log('Aggregate Data->', JSON.stringify(aggregatedData));
         setMetrics(aggregatedData);
       setChartData(formatChartData(aggregatedData));
+      setPrevStartDate(startDate);
+      setPrevEndDate(endDate);
         } catch (error) {
           console.error("Error fetching data:", error);
       } finally {
@@ -44,7 +50,19 @@ const Dashboard = () => {
         }
       };
   
-  // Aggregate Data
+  const handleApply = () => {
+    console.log('Clicked apply');
+    if (startDate !== prevStartDate || endDate !== prevEndDate) {
+      console.log('Fetching metrics');
+      fetchMetrics();
+    } else {
+      console.log('Aggregating metrics at frontend');
+      const aggregatedData = aggregateData(rawData, frequency);
+      setMetrics(aggregatedData);
+      setChartData(formatChartData(aggregatedData));
+    }
+  };
+
       const aggregateData = (rawData, frequency) => {
   const groupedData = {};
 
@@ -119,7 +137,7 @@ const formatChartData = (aggregatedData) => {
               <MenuItem value="Yearly">Yearly</MenuItem>
             </Select>
           </FormControl>
-        <Button variant="contained" color="primary" sx={{ bgcolor: "#000", color: "#fff", ':hover': { bgcolor: "#333" } }} onClick={fetchMetrics}>Apply</Button>
+        <Button variant="contained" color="primary" sx={{ bgcolor: "#000", color: "#fff", ':hover': { bgcolor: "#333" } }} onClick={handleApply}>Apply</Button>
       </Box>
       
       <Box flexGrow={1} padding={3} bgcolor="#f4f4f4">
