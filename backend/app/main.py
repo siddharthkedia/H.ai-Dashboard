@@ -119,7 +119,7 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                 "chatHistory": 0
             }
         },
-        # Stage 7: Group by day and calculate metrics
+        # Stage 7: Group by day and calculate raw metrics only
         {
             "$group": {
                 "_id": {
@@ -140,7 +140,7 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                 "manualLogouts": {"$sum": {"$cond": ["$isChatSession", "$hasLogout", 0]}},
             }
         },
-        # Stage 8: Final projection 
+        # Stage 8: Final projection (only raw metrics)
         {
             "$project": {
                 "_id": 0,
@@ -153,52 +153,7 @@ def create_aggregation_pipeline(start_date: datetime, end_date: datetime) -> lis
                 "maxMessages": 1,
                 "maxDuration": 1,
                 "otpLogins": 1,
-                "manualLogouts": 1,
-                "avgMessages": {
-                    "$switch": {
-                        "branches": [
-                            {
-                                "case": {"$eq": ["$chatSessionCount", 0]},
-                                "then": 0
-                            },
-                            {
-                                "case": {"$gt": ["$chatSessionCount", 0]},
-                                "then": {"$divide": ["$totalMessages", "$chatSessionCount"]}
-                            }
-                        ],
-                        "default": 0
-                    }
-                },
-                "avgDuration": {
-                    "$switch": {
-                        "branches": [
-                            {
-                                "case": {"$eq": ["$chatSessionCount", 0]},
-                                "then": 0
-                            },
-                            {
-                                "case": {"$gt": ["$chatSessionCount", 0]},
-                                "then": {"$divide": ["$totalDuration", "$chatSessionCount"]}
-                            }
-                        ],
-                        "default": 0
-                    }
-                },
-                "ctr": {
-                    "$switch": {
-                        "branches": [
-                            {
-                                "case": {"$eq": ["$sessionCount", 0]},
-                                "then": 0
-                            },
-                            {
-                                "case": {"$gt": ["$sessionCount", 0]},
-                                "then": {"$multiply": [{"$divide": ["$consentedCount", "$sessionCount"]}, 100]}
-                            }
-                        ],
-                        "default": 0
-                    }
-                }
+                "manualLogouts": 1
             }
         },
     ]
@@ -222,17 +177,13 @@ async def get_metrics(dateRange: DateRange, botName: str):
         cursor = sessions.aggregate(pipeline)
         daily_metrics = list(cursor)
 
-        # Format response
         metrics_map = {
             "Total unique sessions": ("sessionCount", "Number of unique sessions created"),
             "User consented sessions": ("consentedCount", "Sessions with user consent"),
-            "Click Through Rate (%)": ("ctr", "Percentage of consented sessions", lambda x: round(x or 0, 2)),
             "Active chat sessions": ("chatSessionCount", "Sessions with >2 messages"),
             "Total messages (active chat sessions)": ("totalMessages", "All messages in active chat sessions"),
-            "Avg messages per chat session": ("avgMessages", "Average messages per active chat session", round),
             "Max messages (active chat session)": ("maxMessages", "Most messages in a single active chat session"),
             "Total engagement (minutes, active chat sessions)": ("totalDuration", "Total chat time in active chat sessions", round),
-            "Avg session duration (minutes, active chat sessions)": ("avgDuration", "Average duration per active chat session", round),
             "Max duration (minutes, active chat session)": ("maxDuration", "Longest chat session duration among active sessions", round),
             "OTP logins (active chat sessions)": ("otpLogins", "Sessions with OTP authentication in active chat sessions"),
             "Manual logouts (active chat sessions)": ("manualLogouts", "Sessions with manual logout in active chat sessions")
