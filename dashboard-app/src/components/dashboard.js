@@ -217,18 +217,18 @@ const Dashboard = () => {
     }
   };
 
-  const handleApply = () => {
-    console.log("Clicked apply");
-    if (startDate !== prevStartDate || endDate !== prevEndDate) {
-      console.log("Fetching metrics");
-      fetchMetrics();
-    } else {
-      console.log("Aggregating metrics at frontend");
-      const aggregatedData = aggregateData(rawData, frequency);
-      setMetrics(aggregatedData);
-      setChartData(formatChartData(aggregatedData));
-    }
-  };
+  // const handleApply = () => {
+  //   console.log("Clicked apply");
+  //   if (startDate !== prevStartDate || endDate !== prevEndDate) {
+  //     console.log("Fetching metrics");
+  //     fetchMetrics();
+  //   } else {
+  //     console.log("Aggregating metrics at frontend");
+  //     const aggregatedData = aggregateData(rawData, frequency);
+  //     setMetrics(aggregatedData);
+  //     setChartData(formatChartData(aggregatedData));
+  //   }
+  // };
 
 
   // Format Data for Charts (Separate Data for Each Metric)
