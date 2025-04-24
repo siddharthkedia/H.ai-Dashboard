@@ -78,7 +78,7 @@ const Dashboard = () => {
   
   const aggregateData = (rawData, frequency) => {
     
-    // Initialize period groups
+    // Initialize period group
     const periodGroups = {};
     
     // Process raw metrics by period
