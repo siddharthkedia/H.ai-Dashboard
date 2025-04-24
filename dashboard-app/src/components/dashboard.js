@@ -44,6 +44,15 @@ const Dashboard = () => {
   const [prevStartDate, setPrevStartDate] = useState(startDate);
   const [prevEndDate, setPrevEndDate] = useState(endDate);
   const [openSettings, setOpenSettings] = useState(false);
+  const [hasData, setHasData] = useState(false); // New state to track if data exists
+
+  useEffect(() => {
+    if (metrics.length > 0) {
+      setHasData(true);
+    } else {
+      setHasData(false);
+    }
+  }, [metrics]);
 
   const fetchMetrics = async () => {
     setLoading(true);
@@ -73,6 +82,23 @@ const Dashboard = () => {
       console.error("Error fetching data:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApply = () => {
+    console.log("Clicked apply");
+    if (!startDate || !endDate) {
+      alert("Please select both start and end dates.");
+      return;
+    }
+    if (startDate !== prevStartDate || endDate !== prevEndDate) {
+      console.log("Fetching metrics");
+      fetchMetrics();
+    } else {
+      console.log("Aggregating metrics at frontend");
+      const aggregatedData = aggregateData(rawData, frequency);
+      setMetrics(aggregatedData);
+      setChartData(formatChartData(aggregatedData));
     }
   };
   
@@ -223,41 +249,39 @@ const Dashboard = () => {
   };
 
   return (
-    <Box sx={{ flexGrow: 1}}>
+    <Box sx={{ flexGrow: 1 }}>
       <AppBar position="static" sx={{ backgroundColor: "#47ee3f" }}>
-        <Toolbar>
+        <Toolbar sx={{ display: 'flex', alignItems: 'center', margin: 1 }}>
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Dashboard Metrics
           </Typography>
-          <IconButton color="inherit" onClick={() => setOpenSettings(true)}>
-            <SettingsIcon />
-          </IconButton>
-        </Toolbar>
-      </AppBar>
-
-      <Dialog open={openSettings} onClose={() => setOpenSettings(false)}>
-        <DialogTitle>Settings</DialogTitle>
-        <DialogContent>
-          <FormControl fullWidth margin="normal">
+          <FormControl sx={{ m: 1, minWidth: 120, margin: 1 }} size="small">
             <TextField
+              id="start-date"
               type="date"
               label="Start Date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
             />
           </FormControl>
-          <FormControl fullWidth margin="normal">
+          <FormControl sx={{ m: 1, minWidth: 120, margin: 1 }} size="small">
             <TextField
+              id="end-date"
               type="date"
               label="End Date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
             />
           </FormControl>
-          <FormControl fullWidth margin="normal">
-            <InputLabel>Frequency</InputLabel>
+          <FormControl sx={{ m: 1, minWidth: 120, margin: 1 }} size="small">
+            <InputLabel id="frequency-label">Frequency</InputLabel>
             <Select
+              labelId="frequency-label"
+              id="frequency"
               value={frequency}
+              label="Frequency"
               onChange={(e) => setFrequency(e.target.value)}
             >
               <MenuItem value="Daily">Daily</MenuItem>
@@ -267,20 +291,19 @@ const Dashboard = () => {
               <MenuItem value="Yearly">Yearly</MenuItem>
             </Select>
           </FormControl>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenSettings(false)}>Cancel</Button>
-          <Button onClick={() => {handleApply(); setOpenSettings(false);}} variant="contained" color="primary">
+          <Button variant="contained" color="primary" sx={{ ml: 2 }} onClick={handleApply}>
             Apply
           </Button>
-        </DialogActions>
-      </Dialog>
+        </Toolbar>
+      </AppBar>
 
-      <Box padding={3} bgcolor="#f4f4f4">
-        {loading ? (
-          <Box display="flex" justifyContent="center" alignItems="center" height="50vh">
+      <Box padding={3} bgcolor="#f4f4f4" sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 'calc(100vh - 64px)' }}>
+        {!hasData && !loading ? (
+          <Typography variant="h6" color="textSecondary">
+            Please select a start and end date and click "Apply" to load data.
+          </Typography>
+        ) : loading ? (
             <CircularProgress />
-          </Box>
         ) : (
           <>
             <Grid container spacing={2} marginTop={2}>
