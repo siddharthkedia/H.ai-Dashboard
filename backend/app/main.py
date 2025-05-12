@@ -7,21 +7,24 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from bson.codec_options import CodecOptions
 import time
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
 app = FastAPI()
-
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Constants
-TZ = ZoneInfo("Asia/Kolkata")
-MONGODB_URI = "mongodb+srv://dbadmin:WgF8i17BVrhMveS@hfcl-genai-cosmon-cin-001-uat.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+TZ = ZoneInfo(os.getenv("APP_TIMEZONE"))
+MONGODB_URI = os.getenv("MONGODB_URI")
 
 # Pydantic Models
 class MetricValue(BaseModel):
@@ -206,4 +209,4 @@ async def get_metrics(dateRange: DateRange, botName: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=os.getenv("API_HOST", "0.0.0.0"), port=int(os.getenv("API_PORT", 8000)))
