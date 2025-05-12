@@ -44,7 +44,7 @@ const Dashboard = () => {
   const [prevStartDate, setPrevStartDate] = useState(startDate);
   const [prevEndDate, setPrevEndDate] = useState(endDate);
   const [openSettings, setOpenSettings] = useState(false);
-  const [hasData, setHasData] = useState(false); // New state to track if data exists
+  const [hasData, setHasData] = useState(false);
 
   useEffect(() => {
     if (metrics.length > 0) {
@@ -103,11 +103,8 @@ const Dashboard = () => {
   };
   
   const aggregateData = (rawData, frequency) => {
-    
-    // Initialize period group
     const periodGroups = {};
     
-    // Process raw metrics by period
     rawData.forEach((metric) => {
       const metricName = metric.metric;
       const isMaxMetric = metricName.startsWith("Max ");
@@ -116,12 +113,11 @@ const Dashboard = () => {
         const date = new Date(entry.period);
         let key;
         
-        // Generate time period key based on frequency
         if (frequency === "Daily") {
-          key = date.toISOString().split("T")[0]; // YYYY-MM-DD format
+          key = date.toISOString().split("T")[0];
         }else if (frequency === "Weekly") {
           const weekStart = new Date(date);
-          weekStart.setDate(date.getDate() - date.getDay() + 1); // Ensure week starts on Monday
+          weekStart.setDate(date.getDate() - date.getDay() + 1);
           key = weekStart.toISOString().split("T")[0];
         } else if (frequency === "Monthly") {
           key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -139,10 +135,7 @@ const Dashboard = () => {
         if (!periodGroups[key][metric.metric]) {
           periodGroups[key][metric.metric] = 0;
         }
-
-       
         
-        // Handle each metric type appropriately
         if (isMaxMetric) {
           if (!periodGroups[key][metricName] || entry.value > periodGroups[key][metricName]) {
             periodGroups[key][metricName] = entry.value;
@@ -153,23 +146,17 @@ const Dashboard = () => {
       });
     });
     
-    // Calculate derived metrics for each period
     Object.keys(periodGroups).forEach(key => {
       const group = periodGroups[key];
       
-      // Calculate CTR
       group["Click Through Rate (%)"] = 
         group["Total unique sessions"] > 0 ? Math.round((group["User consented sessions"] / group["Total unique sessions"]) * 100 * 100)/100 : 0;
       
-      // Calculate avg messages per session
       group["Avg messages per chat session"] = 
         group["Active chat sessions"] > 0 ? Math.round((group["Total messages (active chat sessions)"] / group["Active chat sessions"])*100)/100 : 0;
       
-      // Calculate avg session duration
       group["Avg session duration (minutes, active chat sessions)"] = 
       group["Active chat sessions"]  > 0 ? Math.round((group["Total engagement (minutes, active chat sessions)"] / group["Active chat sessions"])*100)/100 : 0;
-      
-      
     });
     
     return Object.values(periodGroups);
@@ -193,13 +180,11 @@ const Dashboard = () => {
         return Math.max(...metrics.map(entry => entry[metric] || 0));
         
       case "percentage":
-        // For CTR specifically
         const totalConsented = metrics.reduce((sum, entry) => sum + (entry["User consented sessions"] || 0), 0);
         const totalSessions = metrics.reduce((sum, entry) => sum + (entry["Total unique sessions"] || 0), 0);
         return totalSessions > 0 ? Math.round((totalConsented / totalSessions) * 100 * 100) / 100 : 0;
         
       case "average":
-        // Handle different averages based on the specific metric
         if (metric === "Avg messages per chat session") {
           const totalMessages = metrics.reduce((sum, entry) => sum + (entry["Total messages (active chat sessions)"] || 0), 0);
           const totalChatSessions = metrics.reduce((sum, entry) => sum + (entry["Active chat sessions"] || 0), 0);
@@ -217,21 +202,6 @@ const Dashboard = () => {
     }
   };
 
-  // const handleApply = () => {
-  //   console.log("Clicked apply");
-  //   if (startDate !== prevStartDate || endDate !== prevEndDate) {
-  //     console.log("Fetching metrics");
-  //     fetchMetrics();
-  //   } else {
-  //     console.log("Aggregating metrics at frontend");
-  //     const aggregatedData = aggregateData(rawData, frequency);
-  //     setMetrics(aggregatedData);
-  //     setChartData(formatChartData(aggregatedData));
-  //   }
-  // };
-
-
-  // Format Data for Charts (Separate Data for Each Metric)
   const formatChartData = (aggregatedData) => {
     const formattedData = {};
     if (aggregatedData.length === 0) return formattedData;
