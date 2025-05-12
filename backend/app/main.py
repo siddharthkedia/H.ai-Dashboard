@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pymongo import MongoClient
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import List, Union
 from pydantic import BaseModel
@@ -173,7 +173,7 @@ async def get_metrics(dateRange: DateRange, botName: str):
 
         # Parse dates
         start_date = datetime.fromisoformat(dateRange.startDate).replace(tzinfo=TZ)
-        end_date = datetime.fromisoformat(dateRange.endDate).replace(tzinfo=TZ)
+        end_date = datetime.fromisoformat(dateRange.endDate).replace(tzinfo=TZ) + timedelta(days=1)
 
         # Build and execute pipeline
         pipeline = create_aggregation_pipeline(start_date, end_date)
